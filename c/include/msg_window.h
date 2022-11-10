@@ -67,6 +67,7 @@ typedef struct MsgWindow
 
     msgwdw_idx_t sendidx;
     msgwdw_idx_t recvidx;
+    msgwdw_idx_t frontidx;
 
     int valid_recvidx;
     unsigned int txbufnum;
@@ -93,7 +94,6 @@ typedef struct MsgWindow
     uint64_t last_heartbeat_recv;
     uint64_t last_heartbeat_send;
 
-    uint64_t lastrecv;
 
     char *dbgname;
 } MsgWindow;

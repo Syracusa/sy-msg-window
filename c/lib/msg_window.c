@@ -34,64 +34,64 @@ static int valid_idx_diff;
 #define __MW_DO_LOG 1
 
 #if __MW_DO_LOG
-#define MW_LOG(...)                                    \
-    do                                                      \
-    {                                                       \
-        PRT_TIME();                                         \
-        PRT_DBGNAME();                                      \
+#define MW_LOG(...)                                  \
+    do                                               \
+    {                                                \
+        PRT_TIME();                                  \
+        PRT_DBGNAME();                               \
         fprintf(stderr, "[MsgWindow] " __VA_ARGS__); \
     } while (0)
 
-#define MW_DEBUG(...)                                  \
-    do                                                      \
-    {                                                       \
-        PRT_TIME();                                         \
-        PRT_DBGNAME();                                      \
+#define MW_DEBUG(...)                                \
+    do                                               \
+    {                                                \
+        PRT_TIME();                                  \
+        PRT_DBGNAME();                               \
         fprintf(stderr, "[MsgWindow] " __VA_ARGS__); \
     } while (0)
 
-#define MW_ERROR(...)                                        \
-    do                                                            \
-    {                                                             \
-        PRT_TIME();                                               \
-        PRT_DBGNAME();                                            \
+#define MW_ERROR(...)                                      \
+    do                                                     \
+    {                                                      \
+        PRT_TIME();                                        \
+        PRT_DBGNAME();                                     \
         fprintf(stderr, "[MsgWindow ERROR] " __VA_ARGS__); \
     } while (0)
 
 #define MW_VERBOSE(...) \
-    do                       \
-    {                        \
+    do                  \
+    {                   \
     } while (0)
 
 #else /* mw_do_log*/
 
 #define MW_LOG(...) \
-    do                   \
-    {                    \
+    do              \
+    {               \
     } while (0)
 #define MW_DEBUG(...) \
-    do                     \
-    {                      \
+    do                \
+    {                 \
     } while (0)
 
 #if 0
-#define MW_ERROR(...)                                        \
-    do                                                            \
-    {                                                             \
-        PRT_TIME();                                               \
-        PRT_DBGNAME();                                            \
+#define MW_ERROR(...)                                      \
+    do                                                     \
+    {                                                      \
+        PRT_TIME();                                        \
+        PRT_DBGNAME();                                     \
         fprintf(stderr, "[MsgWindow ERROR] " __VA_ARGS__); \
     } while (0)
 #else
 #define MW_ERROR(...) \
-    do                     \
-    {                      \
+    do                \
+    {                 \
     } while (0)
 #endif
 
 #define MW_VERBOSE(...) \
-    do                       \
-    {                        \
+    do                  \
+    {                   \
     } while (0)
 #endif /* mw_do_log*/
 /*===================================================*/
@@ -250,7 +250,7 @@ static MsgElem *new_msgelem(MsgWindow *mw,
     e->created = time_ms();
 #if 0
     MW_DEBUG("New msgelem created. len : %d, seq : %u\n", e->len, e->msgidx);
-#else 
+#else
     (void)mw;
 #endif
     return e;
@@ -339,7 +339,7 @@ static void msgwdw_txmsg_internal(MsgWindow *mw,
     free(sendbuf);
 }
 
-static void do_ratelimit(MsgWindow* mw)
+static void do_ratelimit(MsgWindow *mw)
 {
     uint64_t currtime_ms = time_ms();
     if (mw->sendidx % 10 == 0)
@@ -349,30 +349,29 @@ static void do_ratelimit(MsgWindow* mw)
         {
             mw->suppress_tx_until = currtime_ms;
             mw->suppress_tx_until += mw->txratelimit_10_msg_ms - interval;
-        } 
+        }
     }
     mw->last_10_msg_time = currtime_ms;
 }
 
-int msgwdw_txmsg(MsgWindow* mw,
-                  void* msg,
-                  int msglen)
+int msgwdw_txmsg(MsgWindow *mw,
+                 void *msg,
+                 int msglen)
 {
     check_nack_time(mw);
     int res = 1;
-    if (time_ms() < mw->suppress_tx_until) 
+    if (time_ms() < mw->suppress_tx_until)
     {
         /* Suppress tx rate(IO fail detected) */
         res = -1;
-    } 
-    else 
+    }
+    else
     {
         do_ratelimit(mw);
         msgwdw_txmsg_internal(mw, msg, msglen, -1);
     }
     return res;
 }
-
 
 #define free_elembuf(_elem)  \
     do                       \
@@ -711,7 +710,7 @@ static void invalid_idx_recv(MsgWindow *mw,
     else
     {
         MW_VERBOSE("Recv jumped idx(expected %u recv %u)\n",
-                 mw->recvidx + 1, data->idx);
+                   mw->recvidx + 1, data->idx);
         jumped_idx_recv(mw, data, len);
     }
 }
@@ -772,7 +771,8 @@ static void check_nacklist_timeout(MsgWindow *mw)
         if (mw->nack_timeout_msec <= time_ms() - ne->created)
         {
             MW_LOG("NACK entry idx %u timeouted\n", ne->idx);
-            if (ne->idx > mw->recvidx){
+            if (ne->idx > mw->recvidx)
+            {
                 mw->recvidx = ne->idx; /* Assume recved */
             }
 
@@ -848,16 +848,15 @@ static int is_pkt_ok(MsgWindow *mw, void *data, int len)
 }
 
 #define SUPPRESS_TX_TIME 5000
-static void suppress_tx(MsgWindow* mw)
+static void suppress_tx(MsgWindow *mw)
 {
     MW_LOG("IO fail detected... Suppress tx\n");
     mw->suppress_tx_until = time_ms() + SUPPRESS_TX_TIME;
 }
 
-
 #define HEARTBEAT_SEND_INTERVAL_MS 100
 #define HEARTBEAT_DROP_ASSUME_TIME 150
-static void check_heartbeat(MsgWindow* mw)
+static void check_heartbeat(MsgWindow *mw)
 {
     uint64_t currtime_ms = time_ms();
 
@@ -875,19 +874,19 @@ static void check_heartbeat(MsgWindow* mw)
     if (mw->last_heartbeat_recv + HEARTBEAT_DROP_ASSUME_TIME < currtime_ms)
     {
         /* Peer heartbeat dropped */
-        // MW_LOG("Can't hear peer heartbeat. Suppress tx\n");   
+        // MW_LOG("Can't hear peer heartbeat. Suppress tx\n");
         mw->last_heartbeat_recv = currtime_ms;
         mw->suppress_tx_until = time_ms() + HEARTBEAT_DROP_ASSUME_TIME;
     }
 }
 
-void msgwdw_work(MsgWindow* mw)
+void msgwdw_work(MsgWindow *mw)
 {
     check_nack_time(mw);
     check_heartbeat(mw);
 }
 
-static void check_resolve(MsgWindow* mw)
+static void check_resolve(MsgWindow *mw)
 {
     if (mw->nack_list == NULL && mw->rxmsgbuf == NULL)
     {
@@ -910,12 +909,18 @@ void msgwdw_inject_rxpacket(MsgWindow *mw,
         {
         case MSGWINDOW_FIRSTMSG:
             MW_LOG("Firstmsg recved.. reset nacklist\n");
-            mw->lastrecv = hdr->idx;
+            if (!is_old_idx(hdr->idx, mw->frontidx))
+            {
+                mw->frontidx = hdr->idx;
+            }
             reset_nack_list(mw);
             recv_msg(mw, data, len);
             break;
         case MSGWINDOW_MSG:
-            mw->lastrecv = hdr->idx;
+            if (!is_old_idx(hdr->idx, mw->frontidx))
+            {
+                mw->frontidx = hdr->idx;
+            }
             remove_nack_elem(mw, hdr->idx);
             recv_msg(mw, data, len);
             break;
@@ -930,13 +935,19 @@ void msgwdw_inject_rxpacket(MsgWindow *mw,
             retransmit_msg(mw, hdr->idx);
             break;
         case MSGWINDOW_NOELEM:
-            MW_LOG("Sender responsed no element idx %u\n", hdr->idx);
-            if (mw->recvidx < mw->lastrecv){
-                mw->recvidx = mw->lastrecv;
+            MW_LOG("Sender report no element idx %u\n", hdr->idx);
+            if (!is_old_idx(hdr->idx, mw->recvidx))
+            {
+                mw->recvidx = hdr->idx;
+                send_buffered(mw);
+            }
+            else if (!is_old_idx(hdr->idx, mw->frontidx))
+            {
+                MW_ERROR("Insane message Noelem.. front : %u, reported : %u",
+                         mw->frontidx, hdr->idx);
                 reset_nack_list(mw);
                 clean_rxbuf(mw);
             }
-            send_buffered(mw);
             break;
         case MSGWINDOW_HEARTBEAT:
             // MW_LOG("Peer heartbeat recved\n");
