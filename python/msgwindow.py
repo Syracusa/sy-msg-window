@@ -154,7 +154,7 @@ class MsgWindow:
         self.last_timecheck = time_ms()
 
         self.dbgname = dbgname
-        self.loglevel = 5
+        self.loglevel = 2
 
         self.last_10_msg_time = 0
         self.suppress_tx_until = 0
@@ -168,16 +168,16 @@ class MsgWindow:
 
         diff = MsgWindow.get_idx_diff(now, last)
         if diff < self.valid_idx_diff:
-            if now <= last:
+            if now < last:
                 ret = 1
         else:
-            if last <= now:
+            if last < now:
                 ret = 1
         return ret
 
     def txmsgbuf_check_timeout(self):
         dellist = []
-        for k, v in self.txmsg_recordbuf:
+        for k, v in self.txmsg_recordbuf.items():
             if v.created + self.txbuf_timeout_msec < time_ms():
                 dellist.append(k)
 
@@ -270,12 +270,13 @@ class MsgWindow:
             elem: MsgElem = self.rxmsg_dequeue(nextidx)
             if elem != None:
                 print(f'Recv buffered idx {nextidx}')
-                self.recvidx =nextidx
+                self.recvidx = nextidx
                 self.recvmsg(elem.pkt.msg)
             else:
                 break
 
     def recv_msg_now(self, data: MsgWindowPkt):
+
         self.recvmsg(data.msg)
         self.send_buffered()
 
@@ -320,10 +321,13 @@ class MsgWindow:
     def jumped_idx_recv(self, data: MsgWindowPkt):
         # For all skipped idx...
         for lostidx in range(MsgWindow.get_next_idx(self.recvidx), data.idx):
-            if not lostidx in self.nack_list:
-                self.send_nack(lostidx)
-                self.nack_list[lostidx] = NackElem(lostidx)
-                self.mw_debug(4, f'Add nacklist idx {lostidx}')
+            if not lostidx in self.nack_list :
+                if not lostidx in self.rxmsgbuf: 
+                    self.send_nack(lostidx)
+                    self.nack_list[lostidx] = NackElem(lostidx)
+                    self.mw_debug(4, f'Add nacklist idx {lostidx}')
+                else:
+                    self.mw_debug(4, f'Idx {lostidx} is in rxbuf')
             else:
                 self.mw_debug(4, f'Nacklist idx {lostidx} is already exists')
 
@@ -367,7 +371,7 @@ class MsgWindow:
             self.recv_msg_now(data)
         elif self.is_old_idx(data.idx, self.recvidx):
             self.mw_debug(4, 
-                f'Recv old idx(expected {MsgWindow.get_next_idx(data.idx)} recv {self.recvidx})')
+                f'Recv old idx(expected {MsgWindow.get_next_idx(self.recvidx)} recv {data.idx})')
             self.old_idx_recv(data)
         else:
             self.jumped_idx_recv(data)
@@ -409,6 +413,11 @@ class MsgWindow:
 
         if checksum != calcd:
             self.mw_debug(4, f'MALFORMED PACKET(checksum {checksum} != {calcd})')
+            res = 0
+
+        recvlen = len(data.pack())
+        if recvlen != data.len:
+            self.mw_debug(4, f'MALFORMED PACKET(recvlen {recvlen} != expectedlen {data.len})')
             res = 0
 
         return res
@@ -465,7 +474,8 @@ class MsgWindow:
                 self.nack_list = {}
                 self.recv_msg(pkt)
             elif pkt.ctrl == self.MSGWINDOW_MSG:
-                self.mw_debug(4, f'Msgidx {pkt.idx} recved')
+                if pkt.idx % 1000 == 0:
+                    self.mw_debug(4, f'Msgidx {pkt.idx} recved')
                 if not self.is_old_idx(pkt.idx, self.recvidx):
                     self.frontidx = pkt.idx
                 self.remove_nack_elem(pkt.idx)
