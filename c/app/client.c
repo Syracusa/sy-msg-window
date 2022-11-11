@@ -144,9 +144,7 @@ static void gen_simtraffic_loop(MsgWindow *mw, int interval_ms)
 {
     int cli_sendidx = 0;
     uint64_t last_send = time_ms();
-
-
-
+    
     while (1)
     {
         msgwdw_work(mw);

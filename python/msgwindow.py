@@ -5,6 +5,40 @@ import struct
 def time_ms():
     return time.time_ns() / 1000000
 
+def print_hex_dump(buffer, start_offset=0):
+    print('-' * 79)
+ 
+    offset = 0
+    while offset < len(buffer):
+        # Offset
+        print(' %08X : ' % (offset + start_offset), end='')
+ 
+        if ((len(buffer) - offset) < 0x10) is True:
+            data = buffer[offset:]
+        else:
+            data = buffer[offset:offset + 0x10]
+ 
+        # Hex Dump
+        for hex_dump in data:
+            print("%02X" % hex_dump, end=' ')
+ 
+        if ((len(buffer) - offset) < 0x10) is True:
+            print(' ' * (3 * (0x10 - len(data))), end='')
+ 
+        print('  ', end='')
+ 
+        # Ascii
+        for ascii_dump in data:
+            if ((ascii_dump >= 0x20) is True) and ((ascii_dump <= 0x7E) is True):
+                print(chr(ascii_dump), end='')
+            else:
+                print('.', end='')
+ 
+        offset = offset + len(data)
+        print('')
+ 
+    print('-' * 79)
+
 class MsgWindowPkt:
     hdrsz = 7
 
@@ -13,16 +47,17 @@ class MsgWindowPkt:
         self.idx = 0
         self.len = 0
         self.checksum = 0
-        self.msg = None
+        self.msg: bytes = b''
 
     def unpack(self, bin):
-        self.ctrl, self.idx,
-        self.msglen, self.checksum,
-        self.msg = struct.unpack(f'=BHHH{len(bin) - 7}s', bin)
+        (self.ctrl, self.idx, self.len, 
+        self.checksum, self.msg) = struct.unpack(f'=BHHH{len(bin) - MsgWindowPkt.hdrsz}s', bin)
+        # print( f'self.msg : {self.ctrl} {self.idx} {self.len} {self.checksum} {self.msg} ' )
 
     def pack(self):
+        # print(f'len{len(self.msg)} {self.msg}')
         bin = struct.pack(f'=BHHH{len(self.msg)}s',
-                          self.ctrl, self.idx, self.msglen,
+                          self.ctrl, self.idx, self.len,
                           self.checksum, self.msg)
         return bin
 
@@ -46,25 +81,27 @@ class MsgWindow:
     MSGWINDOW_FIRSTMSG = 5
     MSGWINDOW_RESOLVED = 6
 
-    def calc_checksum(data, len):
-        res = 0
-
-        if len % 2 == 1:
-            even_len = len - 1
+    def calc_checksum(data):
+        dlen = len(data)
+        if dlen % 2 == 1:
+            even_len = dlen - 1
         else:
-            even_len = len
+            even_len = dlen
 
         checksum = 0
         i = 0
         while i < even_len:
-            partial = struct.unpack('<H', data[i:i+2])
+            partial, = struct.unpack('<H', data[i:i+2])
             checksum += partial
             i += 2
 
-        if even_len != len:
-            partial = struct.unpack('<B', data[len - 1])
+        if even_len != dlen:
+            partial, = struct.unpack('<B', data[dlen - 1:dlen])
+        
+        checksum += partial
+        # print(f'Checksum {checksum}')
 
-        return checksum
+        return checksum % 65536
 
     def get_idx_diff(now, old):
         if now > old:
@@ -117,7 +154,7 @@ class MsgWindow:
         self.last_timecheck = time_ms()
 
         self.dbgname = dbgname
-        self.loglevel = 3
+        self.loglevel = 5
 
         self.last_10_msg_time = 0
         self.suppress_tx_until = 0
@@ -129,7 +166,7 @@ class MsgWindow:
     def is_old_idx(self, now, last):
         ret = 0
 
-        diff = self.get_idx_diff(now, last)
+        diff = MsgWindow.get_idx_diff(now, last)
         if diff < self.valid_idx_diff:
             if now <= last:
                 ret = 1
@@ -149,7 +186,7 @@ class MsgWindow:
 
     def txmsg_record(self, data: MsgWindowPkt):
         if data.idx in self.txmsg_recordbuf:
-            self.mw_debug(f'Msg {data.idx} is already in buffer')
+            self.mw_debug(4, f'Msg {data.idx} is already in buffer')
         else:
             self.txmsg_recordbuf[data.idx] = MsgElem(data)
 
@@ -162,7 +199,9 @@ class MsgWindow:
         pkt.checksum = 0
         chksum = MsgWindow.calc_checksum(pkt.pack())
         pkt.checksum = chksum
-        self.sendpkt(pkt)
+        # print('txpkt dump')
+        # print_hex_dump(pkt.pack())
+        self.sendpkt(pkt.pack())
 
     def msgwdw_txmsg_internal(self, msg, retransmit_idx):
         pkt = MsgWindowPkt()
@@ -175,7 +214,7 @@ class MsgWindow:
             if self.firstsend == 1:
                 pkt.ctrl = MsgWindow.MSGWINDOW_FIRSTMSG
                 pkt.idx = self.sendidx
-                self.sendidx = self.get_next_idx(self.sendidx)
+                self.sendidx = MsgWindow.get_next_idx(self.sendidx)
                 self.firstsend = 0
                 self.mw_debug(4, f'Tx first pkt idx {pkt.idx}')
             elif retransmit_idx >= 0:
@@ -185,11 +224,10 @@ class MsgWindow:
             else:
                 pkt.ctrl = MsgWindow.MSGWINDOW_MSG
                 pkt.idx = self.sendidx
-                self.sendidx = self.get_next_idx(self.sendidx)
+                self.sendidx = MsgWindow.get_next_idx(self.sendidx)
 
-        packed = pkt.pack()
         if retransmit_idx < 0:
-            self.txmsg_record(packed)
+            self.txmsg_record(pkt)
         self.send_ctrl_packet(pkt)
 
     def do_ratelimit(self):
@@ -213,7 +251,7 @@ class MsgWindow:
 
     def msgwdw_txmsg(self, msg):
         self.check_nack_time()
-        if time_ms < self.suppress_tx_until:
+        if time_ms() < self.suppress_tx_until:
             return -1
         else:
             self.do_ratelimit()
@@ -221,20 +259,24 @@ class MsgWindow:
             return 1
 
     def rxmsg_dequeue(self, idx):
-        return self.rxmsgbuf.get(idx, None)
+        return self.rxmsgbuf.pop(idx, None)
 
     def rxmsg_enqueue(self, data: MsgWindowPkt):
-        self.rxmsgbuf[data.idx] = data
+        self.rxmsgbuf[data.idx] = MsgElem(data)
 
     def send_buffered(self):
         while True:
-            elem: MsgWindowPkt = self.rxmsg_dequeue(
-                self.get_next_idx(self.recvidx))
+            nextidx = MsgWindow.get_next_idx(self.recvidx)
+            elem: MsgElem = self.rxmsg_dequeue(nextidx)
             if elem != None:
-                self.recvmsg(elem)
+                print(f'Recv buffered idx {nextidx}')
+                self.recvidx =nextidx
+                self.recvmsg(elem.pkt.msg)
+            else:
+                break
 
     def recv_msg_now(self, data: MsgWindowPkt):
-        self.recvmsg(data)
+        self.recvmsg(data.msg)
         self.send_buffered()
 
     def retransmit_nack(self):
@@ -249,14 +291,14 @@ class MsgWindow:
 
     def remove_nack_elem(self, idx):
         ne = self.nack_list.pop(idx, None)
-        if ne == None:
-            self.mw_debug(f'idx {idx} remove fail')
+        # if ne == None:
+        #     self.mw_debug(4, f'idx {idx} remove fail')
 
     def check_rxbuf_timeout(self):
         dellist = []
-        for k, v in self.rxmsgbuf:
+        for k, v in self.rxmsgbuf.items():
             if self.rxbuf_timeout_msec <= time_ms() - v.created:
-                self.mw_debug(f'Rxbuf entry idx {k} timeouted')
+                self.mw_debug(4, f'Rxbuf entry idx {k} timeouted')
                 dellist.append(k)
 
         for e in dellist:
@@ -269,33 +311,31 @@ class MsgWindow:
             self.retransmit_nack()
 
     def send_nack(self, idx):
+        self.mw_debug(4, f'Send nack idx {idx}')
         pkt = MsgWindowPkt()
         pkt.idx = idx
         pkt.ctrl = MsgWindow.MSGWINDOW_NACK
         self.send_ctrl_packet(pkt)
 
     def jumped_idx_recv(self, data: MsgWindowPkt):
-
         # For all skipped idx...
-        for lostidx in range(self.get_next_idx(self.recvidx), data.idx):
-            # 1. send nack
-            self.send_nack(lostidx)
-            # 2. add to nacklist
+        for lostidx in range(MsgWindow.get_next_idx(self.recvidx), data.idx):
             if not lostidx in self.nack_list:
+                self.send_nack(lostidx)
                 self.nack_list[lostidx] = NackElem(lostidx)
-                self.mw_debug(f'Add nacklist idx {lostidx}')
+                self.mw_debug(4, f'Add nacklist idx {lostidx}')
             else:
-                self.mw_debug(f'Nacklist idx {lostidx} is already exists')
+                self.mw_debug(4, f'Nacklist idx {lostidx} is already exists')
 
         # Buffer message
         if not data.idx in self.rxmsgbuf:
             self.rxmsg_enqueue(data)
-            self.mw_debug(f'Msgidx {data.idx} buffered')
+            self.mw_debug(4, f'Msgidx {data.idx} buffered')
         else:
-            self.mw_debug(f'Already buffered idx {data.idx}')
+            self.mw_debug(4, f'Already buffered idx {data.idx}')
 
     def recv_msg(self, data: MsgWindowPkt):
-        expected = self.get_next_idx(self.recvidx)
+        expected = MsgWindow.get_next_idx(self.recvidx)
         if self.valid_recvidx == 1 and data.idx != expected:
             self.invalid_idx_recv(data)
         else:
@@ -305,19 +345,19 @@ class MsgWindow:
 
     def old_idx_recv(self, data: MsgWindowPkt):
         if data.idx in self.nack_list:
-            self.mw_debug(f'Expected retransmit but no flag(idx : {data.idx}')
+            self.mw_debug(4, f'Expected retransmit but no flag(idx : {data.idx}')
             data.ctrl = self.MSGWINDOW_RETRANSMIT
-            self.remove_nack_elem(self, data.idx)
+            self.remove_nack_elem(data.idx)
 
             self.recv_msg(data)
         else:
-            self.mw_debug(
+            self.mw_debug(4,
                 f'Duplicated message expected, Drop.(idx {data.idx})')
 
     def invalid_idx_recv(self, data: MsgWindowPkt):
         diff = MsgWindow.get_idx_diff(data.idx, self.recvidx)
         if diff > self.valid_idx_diff:
-            self.mw_debug(
+            self.mw_debug( 4, 
                 f'Recv insane idx... reset recvvidx to {self.recvidx}')
             self.nack_list = {}
             self.rxmsgbuf = {}
@@ -326,19 +366,20 @@ class MsgWindow:
 
             self.recv_msg_now(data)
         elif self.is_old_idx(data.idx, self.recvidx):
-            self.mw_debug(
-                f'Recv old idx(expected {self.get_next_idx(data.idx)} recv {self.recvidx})')
+            self.mw_debug(4, 
+                f'Recv old idx(expected {MsgWindow.get_next_idx(data.idx)} recv {self.recvidx})')
             self.old_idx_recv(data)
         else:
-            self.mw_debug(f'Recv jumped idx' +
-                          f'expected : {self.get_next_idx(self.recvidx)}' +
-                          f'recv : {data.idx}')
+            self.jumped_idx_recv(data)
+            self.mw_debug(4, f'Recv jumped idx..' +
+                          f' expected : {MsgWindow.get_next_idx(self.recvidx)}' +
+                          f' recv : {data.idx}')
 
     def check_nacklist_timeout(self):
         dellist = []
         for k, v in self.nack_list.items():
             if self.nack_timeout_msec <= time_ms() - v.created:
-                self.mw_debug(f'NACK entry idx {k} timeouted')
+                self.mw_debug(4, f'NACK entry idx {k} timeouted')
                 if k > self.recvidx:
                     self.recvidx = k
 
@@ -349,11 +390,11 @@ class MsgWindow:
 
     def retransmit_msg(self, idx):
         if idx in self.txmsg_recordbuf:
-            self.mw_debug(f'Msgidx {idx} retransmit', idx)
+            self.mw_debug(4, f'Msgidx {idx} retransmit')
             elem: MsgElem = self.txmsg_recordbuf[idx]
             self.msgwdw_txmsg_internal(elem.pkt.msg, elem.pkt.idx)
         else:
-            self.mw_debug(f'Msgidx {idx} retransmit fail(no such entry)')
+            self.mw_debug(4, f'Msgidx {idx} retransmit fail(no such entry)')
             msg = MsgWindowPkt()
             msg.ctrl = self.MSGWINDOW_NOELEM
             msg.idx = idx
@@ -364,10 +405,10 @@ class MsgWindow:
 
         checksum = data.checksum
         data.checksum = 0
-        calcd = self.calc_checksum(data.pack())
+        calcd = MsgWindow.calc_checksum(data.pack())
 
         if checksum != calcd:
-            self.mw_debug(f'MALFORMED PACKET(checksum {checksum} != {calcd})')
+            self.mw_debug(4, f'MALFORMED PACKET(checksum {checksum} != {calcd})')
             res = 0
 
         return res
@@ -375,7 +416,7 @@ class MsgWindow:
     SUPPRESS_TX_TIME_MS = 5000
 
     def suppress_tx(self):
-        self.mw_log('IO fail detected... Suppress tx')
+        self.mw_debug(4, 'IO fail detected... Suppress tx')
         self.suppress_tx_until = time_ms() + self.SUPPRESS_TX_TIME_MS
 
     HEARTBEAT_SEND_INTERVAL_MS = 100
@@ -411,41 +452,45 @@ class MsgWindow:
             self.send_resolve()
 
     def msgwdw_inject_rxpacket(self, data):
+        # print('Injected dump')
+        # print_hex_dump(data)
         pkt = MsgWindowPkt()
         pkt.unpack(data)
 
         if self.is_pkt_ok(pkt):
             if pkt.ctrl == self.MSGWINDOW_FIRSTMSG:
-                self.mw_debug('Firstmsg recved.. reset nacklist')
+                self.mw_debug(4, 'Firstmsg recved.. reset nacklist')
                 if not self.is_old_idx(pkt.idx, self.recvidx):
                     self.frontidx = pkt.idx
                 self.nack_list = {}
                 self.recv_msg(pkt)
             elif pkt.ctrl == self.MSGWINDOW_MSG:
+                self.mw_debug(4, f'Msgidx {pkt.idx} recved')
                 if not self.is_old_idx(pkt.idx, self.recvidx):
                     self.frontidx = pkt.idx
                 self.remove_nack_elem(pkt.idx)
                 self.recv_msg(pkt)
             elif pkt.ctrl == self.MSGWINDOW_RETRANSMIT:
-                self.mw_debug(f'Retransmitted message idx {pkt.idx} recvd')
+                self.mw_debug(4, f'Retransmitted message idx {pkt.idx} recvd')
                 self.remove_nack_elem(pkt.idx)
                 self.recv_msg(pkt)
                 self.check_resolve()
             elif pkt.ctrl == self.MSGWINDOW_NACK:
+                self.mw_debug(4, f'Peer send nack at idx {pkt.idx}')
                 self.suppress_tx()
                 self.retransmit_msg(pkt.idx)
             elif pkt.ctrl == self.MSGWINDOW_NOELEM:
-                self.mw_debug(f'Sender response no element idx {pkt.idx}')
+                self.mw_debug(4, f'Sender response no element idx {pkt.idx}')
                 if not self.is_old_idx(pkt.idx, self.recvidx):
                     self.recvidx = pkt.idx
                     self.send_buffered()
                 elif not self.is_old_idx(pkt.idx, self.frontidx):
-                    self.mw_debug(f'Insane message noelem..' +
+                    self.mw_debug(4, f'Insane message noelem..' +
                                   f' front {self.frontidx}, reported {pkt.idx}')
             elif pkt.ctrl == self.MSGWINDOW_HEARTBEAT:
                 self.last_heartbeat_recv = time_ms()
             elif pkt.ctrl == self.MSGWINDOW_RESOLVED:
-                self.mw_debug('Receiver response congestion resolved')
+                self.mw_debug(4, 'Receiver response congestion resolved')
                 self.suppress_tx_until = time_ms()
             else:
-                self.mw_debug(f'Unavailable ctrl code {pkt.idx}')
+                self.mw_debug(4, f'Unavailable ctrl code {pkt.idx}')
